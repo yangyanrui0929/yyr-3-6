@@ -10,6 +10,8 @@ export interface CloudWhaleData {
   dockedTicks: number;
   nextVisitIn: number;
   satisfaction: number;
+  dockX: number;
+  dockY: number;
 }
 
 export interface NoiseCell {

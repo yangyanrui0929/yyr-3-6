@@ -24,7 +24,8 @@ export function getOppositeDirection(dir: number): number {
 export function calculatePowerNetwork(
   grid: GridCell[][],
   dayTime: number,
-  storedPower: number
+  storedPower: number,
+  windBoost: number = 0
 ): {
   poweredCells: Set<string>;
   totalGeneration: number;
@@ -45,9 +46,10 @@ export function calculatePowerNetwork(
       if (cell.faulty) continue;
 
       if (cell.type === 'windmill') {
-        const gen = isDay
+        const baseGen = isDay
           ? BUILDING_STATS.windmill.dayGen
           : BUILDING_STATS.windmill.nightGen;
+        const gen = baseGen + windBoost;
         totalGeneration += gen;
         windmillSources.push({ x, y, gen });
       }
@@ -172,28 +174,45 @@ export function calculatePowerNetwork(
     x: number;
     y: number;
     consumption: number;
+    priority: number;
   }> = [];
   for (let y = 0; y < GRID_SIZE; y++) {
     for (let x = 0; x < GRID_SIZE; x++) {
       const cell = grid[y][x];
-      if (
-        (cell.type === 'house' || cell.type === 'factory') &&
-        connectedCells.has(`${x},${y}`)
-      ) {
+      if (!connectedCells.has(`${x},${y}`)) continue;
+
+      if (cell.type === 'house') {
         connectedConsumers.push({
           x,
           y,
-          consumption:
-            cell.type === 'house'
-              ? BUILDING_STATS.house.consumption
-              : BUILDING_STATS.factory.consumption,
+          consumption: BUILDING_STATS.house.consumption,
+          priority: 1,
+        });
+      }
+      if (cell.type === 'lamp') {
+        connectedConsumers.push({
+          x,
+          y,
+          consumption: BUILDING_STATS.lamp.consumption,
+          priority: 2,
+        });
+      }
+      if (cell.type === 'factory') {
+        connectedConsumers.push({
+          x,
+          y,
+          consumption: BUILDING_STATS.factory.consumption,
+          priority: 3,
         });
       }
     }
   }
 
   let remainingPower = totalAvailable;
-  connectedConsumers.sort((a, b) => a.consumption - b.consumption);
+  connectedConsumers.sort((a, b) => {
+    if (a.priority !== b.priority) return a.priority - b.priority;
+    return a.consumption - b.consumption;
+  });
 
   for (const consumer of connectedConsumers) {
     if (remainingPower >= consumer.consumption) {
@@ -323,8 +342,9 @@ export function isDockingZoneSuitable(
   centerX: number,
   centerY: number,
   radius: number
-): { suitable: boolean; reasons: string[] } {
+): { suitable: boolean; reasons: string[]; score: number } {
   const reasons: string[] = [];
+  let score = 0;
 
   let totalNoise = 0;
   let cellCount = 0;
@@ -353,16 +373,43 @@ export function isDockingZoneSuitable(
 
   if (avgNoise > NOISE_THRESHOLD) {
     reasons.push('噪声过高');
+  } else {
+    score += (NOISE_THRESHOLD - avgNoise) * 10;
   }
   if (stability < POWER_STABILITY_THRESHOLD) {
     reasons.push('供电不稳定');
+  } else {
+    score += stability * 20;
   }
   if (comfortLamps < COMFORT_LAMP_THRESHOLD) {
     reasons.push('照明不足');
+  } else {
+    score += comfortLamps * 5;
   }
 
   return {
     suitable: reasons.length === 0,
     reasons,
+    score,
   };
+}
+
+export function findBestDockingSpot(
+  grid: GridCell[][],
+  poweredCells: Set<string>,
+  noiseMap: number[][],
+  radius: number = 2
+): { x: number; y: number; suitable: boolean; score: number; reasons: string[] } {
+  let bestSpot = { x: Math.floor(GRID_SIZE / 2), y: Math.floor(GRID_SIZE / 2), suitable: false, score: -Infinity, reasons: [] as string[] };
+
+  for (let y = 0; y < GRID_SIZE; y++) {
+    for (let x = 0; x < GRID_SIZE; x++) {
+      const result = isDockingZoneSuitable(grid, poweredCells, noiseMap, x, y, radius);
+      if (result.score > bestSpot.score) {
+        bestSpot = { x, y, suitable: result.suitable, score: result.score, reasons: result.reasons };
+      }
+    }
+  }
+
+  return bestSpot;
 }
