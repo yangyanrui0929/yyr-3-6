@@ -1,6 +1,22 @@
-export type CellType = 'empty' | 'windmill' | 'house' | 'factory' | 'battery' | 'wire';
+export type CellType = 'empty' | 'windmill' | 'house' | 'factory' | 'battery' | 'wire' | 'lamp';
 
 export type ToolType = CellType | 'remove';
+
+export type CloudWhaleState = 'away' | 'approaching' | 'docked' | 'leaving';
+
+export interface CloudWhaleData {
+  state: CloudWhaleState;
+  progress: number;
+  dockedTicks: number;
+  nextVisitIn: number;
+  satisfaction: number;
+}
+
+export interface NoiseCell {
+  x: number;
+  y: number;
+  level: number;
+}
 
 export interface GridCell {
   x: number;
@@ -14,11 +30,12 @@ export interface GridCell {
 export const GRID_SIZE = 8;
 
 export const BUILDING_STATS = {
-  windmill: { dayGen: 5, nightGen: 1, consumption: 0, name: '风车', emoji: '🌀' },
-  house: { dayGen: 0, nightGen: 0, consumption: 2, name: '住房', emoji: '🏠' },
-  factory: { dayGen: 0, nightGen: 0, consumption: 4, name: '工坊', emoji: '🏭' },
-  battery: { dayGen: 0, nightGen: 0, consumption: 0, storage: 20, name: '蓄电池', emoji: '🔋' },
-  wire: { dayGen: 0, nightGen: 0, consumption: 0, name: '电线', emoji: '⚡' },
+  windmill: { dayGen: 5, nightGen: 1, consumption: 0, name: '风车', emoji: '🌀', noise: 1 },
+  house: { dayGen: 0, nightGen: 0, consumption: 2, name: '住房', emoji: '🏠', noise: 0 },
+  factory: { dayGen: 0, nightGen: 0, consumption: 4, name: '工坊', emoji: '🏭', noise: 3 },
+  battery: { dayGen: 0, nightGen: 0, consumption: 0, storage: 20, name: '蓄电池', emoji: '🔋', noise: 0 },
+  wire: { dayGen: 0, nightGen: 0, consumption: 0, name: '电线', emoji: '⚡', noise: 0 },
+  lamp: { dayGen: 0, nightGen: 0, consumption: 1, name: '柔和灯', emoji: '💡', noise: 0, comfort: 1 },
 } as const;
 
 export const WIRE_CONNECTIONS: Record<number, [boolean, boolean, boolean, boolean]> = {
@@ -42,6 +59,7 @@ export const TOOLS: Array<{ type: ToolType; name: string; emoji: string; descrip
   { type: 'house', name: '住房', emoji: '🏠', description: '消耗2电，提供满意度' },
   { type: 'factory', name: '工坊', emoji: '🏭', description: '消耗4电，生产物资' },
   { type: 'battery', name: '蓄电池', emoji: '🔋', description: '存储20电量' },
+  { type: 'lamp', name: '柔和灯', emoji: '💡', description: '消耗1电，营造舒适氛围' },
   { type: 'wire', name: '电线', emoji: '⚡', description: '传导电力，右键/R旋转' },
   { type: 'remove', name: '拆除', emoji: '🗑️', description: '移除建筑或电线' },
 ];
@@ -50,3 +68,16 @@ export const DAY_LENGTH = 100;
 export const DAY_THRESHOLD = 50;
 export const TICK_INTERVAL = 300;
 export const FAULT_CHANCE = 0.002;
+
+export const CLOUD_WHALE_VISIT_INTERVAL = 300;
+export const CLOUD_WHALE_APPROACH_DURATION = 50;
+export const CLOUD_WHALE_LEAVE_DURATION = 30;
+export const CLOUD_WHALE_MIN_DOCK_TIME = 100;
+export const CLOUD_WHALE_MAX_DOCK_TIME = 300;
+
+export const CLOUD_WHALE_WIND_BOOST = 2;
+export const CLOUD_WHALE_CRYSTAL_PER_TICK = 0.1;
+
+export const NOISE_THRESHOLD = 2;
+export const POWER_STABILITY_THRESHOLD = 0.8;
+export const COMFORT_LAMP_THRESHOLD = 2;

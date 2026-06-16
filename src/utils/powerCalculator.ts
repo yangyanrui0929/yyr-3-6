@@ -5,6 +5,9 @@ import {
   DIR_OFFSETS,
   BUILDING_STATS,
   DAY_THRESHOLD,
+  NOISE_THRESHOLD,
+  POWER_STABILITY_THRESHOLD,
+  COMFORT_LAMP_THRESHOLD,
 } from './constants';
 
 export function isWireConnected(wire: GridCell, direction: number): boolean {
@@ -56,6 +59,9 @@ export function calculatePowerNetwork(
       }
       if (cell.type === 'factory') {
         totalConsumption += BUILDING_STATS.factory.consumption;
+      }
+      if (cell.type === 'lamp') {
+        totalConsumption += BUILDING_STATS.lamp.consumption;
       }
     }
   }
@@ -118,7 +124,8 @@ export function calculatePowerNetwork(
         currentCell.type === 'windmill' ||
         currentCell.type === 'house' ||
         currentCell.type === 'factory' ||
-        currentCell.type === 'battery'
+        currentCell.type === 'battery' ||
+        currentCell.type === 'lamp'
       ) {
         canConnectFromCurrent = true;
       }
@@ -130,7 +137,8 @@ export function calculatePowerNetwork(
         neighbor.type === 'windmill' ||
         neighbor.type === 'house' ||
         neighbor.type === 'factory' ||
-        neighbor.type === 'battery'
+        neighbor.type === 'battery' ||
+        neighbor.type === 'lamp'
       ) {
         canConnectFromNeighbor = true;
       }
@@ -220,5 +228,141 @@ export function countPoweredBuildings(
     }
   }
 
-  return { houses, poweredHouses, factories, poweredFactories };
+  return { houses, poweredHouses, factories: factories, poweredFactories };
+}
+
+export function calculateNoiseMap(grid: GridCell[][]): number[][] {
+  const noiseMap: number[][] = [];
+  for (let y = 0; y < GRID_SIZE; y++) {
+    const row: number[] = [];
+    for (let x = 0; x < GRID_SIZE; x++) {
+      row.push(0);
+    }
+    noiseMap.push(row);
+  }
+
+  for (let y = 0; y < GRID_SIZE; y++) {
+    for (let x = 0; x < GRID_SIZE; x++) {
+      const cell = grid[y][x];
+      if (cell.faulty) continue;
+      const stats = BUILDING_STATS[cell.type];
+      if (!stats || !('noise' in stats)) continue;
+      const noiseLevel = (stats as { noise: number }).noise;
+      if (noiseLevel <= 0) continue;
+
+      for (let dy = -2; dy <= 2; dy++) {
+        for (let dx = -2; dx <= 2; dx++) {
+          const nx = x + dx;
+          const ny = y + dy;
+          if (nx < 0 || nx >= GRID_SIZE || ny < 0 || ny >= GRID_SIZE) continue;
+          const distance = Math.sqrt(dx * dx + dy * dy);
+          if (distance > 2) continue;
+          const falloff = 1 - distance / 2.5;
+          noiseMap[ny][nx] += noiseLevel * Math.max(0, falloff);
+        }
+      }
+    }
+  }
+
+  return noiseMap;
+}
+
+export function getAverageNoise(noiseMap: number[][]): number {
+  let total = 0;
+  let count = 0;
+  for (let y = 0; y < GRID_SIZE; y++) {
+    for (let x = 0; x < GRID_SIZE; x++) {
+      total += noiseMap[y][x];
+      count++;
+    }
+  }
+  return count > 0 ? total / count : 0;
+}
+
+export function countPoweredLamps(
+  grid: GridCell[][],
+  poweredCells: Set<string>
+): { lamps: number; poweredLamps: number } {
+  let lamps = 0;
+  let poweredLamps = 0;
+
+  for (let y = 0; y < GRID_SIZE; y++) {
+    for (let x = 0; x < GRID_SIZE; x++) {
+      const cell = grid[y][x];
+      if (cell.type === 'lamp') {
+        lamps++;
+        if (poweredCells.has(`${x},${y}`)) poweredLamps++;
+      }
+    }
+  }
+
+  return { lamps, poweredLamps };
+}
+
+export function calculatePowerStability(
+  grid: GridCell[][],
+  poweredCells: Set<string>
+): number {
+  const { houses, poweredHouses } = countPoweredBuildings(grid, poweredCells);
+  const { lamps, poweredLamps } = countPoweredLamps(grid, poweredCells);
+  const totalBuildings = houses + lamps;
+  const totalPowered = poweredHouses + poweredLamps;
+
+  const hasFlicker = grid.some((row) => row.some((cell) => cell.faulty && cell.type === 'wire'));
+
+  const baseStability = totalBuildings > 0 ? totalPowered / totalBuildings : 1;
+  const flickerPenalty = hasFlicker ? 0.3 : 0;
+
+  return Math.max(0, baseStability - flickerPenalty);
+}
+
+export function isDockingZoneSuitable(
+  grid: GridCell[][],
+  poweredCells: Set<string>,
+  noiseMap: number[][],
+  centerX: number,
+  centerY: number,
+  radius: number
+): { suitable: boolean; reasons: string[] } {
+  const reasons: string[] = [];
+
+  let totalNoise = 0;
+  let cellCount = 0;
+  let comfortLamps = 0;
+
+  for (let dy = -radius; dy <= radius; dy++) {
+    for (let dx = -radius; dx <= radius; dx++) {
+      const nx = centerX + dx;
+      const ny = centerY + dy;
+      if (nx < 0 || nx >= GRID_SIZE || ny < 0 || ny >= GRID_SIZE) continue;
+      const distance = Math.sqrt(dx * dx + dy * dy);
+      if (distance > radius) continue;
+
+      totalNoise += noiseMap[ny][nx];
+      cellCount++;
+
+      const cell = grid[ny][nx];
+      if (cell.type === 'lamp' && poweredCells.has(`${nx},${ny}`) && !cell.faulty) {
+        comfortLamps++;
+      }
+    }
+  }
+
+  const avgNoise = cellCount > 0 ? totalNoise / cellCount : 0;
+  const stability = calculatePowerStability(grid, poweredCells);
+
+  if (avgNoise > NOISE_THRESHOLD) {
+    reasons.push('噪声过高');
+  }
+  if (stability < POWER_STABILITY_THRESHOLD) {
+    reasons.push('供电不稳定');
+  }
+  if (comfortLamps < COMFORT_LAMP_THRESHOLD) {
+    reasons.push('照明不足');
+  }
+
+  return {
+    suitable: reasons.length === 0,
+    reasons,
+  };
 }

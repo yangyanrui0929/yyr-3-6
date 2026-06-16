@@ -1,8 +1,8 @@
 import React from 'react';
 import { useGameStore } from '../store/useGameStore';
-import { GRID_SIZE, BUILDING_STATS } from '../utils/constants';
+import { GRID_SIZE } from '../utils/constants';
 import { countPoweredBuildings } from '../utils/powerCalculator';
-import { X, Smile, Meh, Frown, Zap, Battery, Home, Factory, Wind } from 'lucide-react';
+import { X, Smile, Zap, Battery, Home, Factory, Wind, Gem } from 'lucide-react';
 
 export const SettlementModal: React.FC = () => {
   const {
@@ -16,6 +16,8 @@ export const SettlementModal: React.FC = () => {
     maxStorage,
     dayTime,
     poweredCells,
+    cloudCrystals,
+    cloudWhale,
   } = useGameStore();
 
   if (!showSettlement) return null;
@@ -51,12 +53,6 @@ export const SettlementModal: React.FC = () => {
   };
 
   const gradeInfo = getGrade();
-
-  const getSatisfactionIcon = () => {
-    if (satisfaction >= 70) return <Smile className="w-8 h-8 text-green-500" />;
-    if (satisfaction >= 40) return <Meh className="w-8 h-8 text-yellow-500" />;
-    return <Frown className="w-8 h-8 text-red-500" />;
-  };
 
   return (
     <div
@@ -148,6 +144,33 @@ export const SettlementModal: React.FC = () => {
                 </span>
               </div>
             </div>
+          </div>
+
+          <div className="bg-cyan-50 rounded-xl p-4 space-y-3">
+            <h3 className="text-sm font-bold text-gray-700">🐋 云鲸充电</h3>
+            <div className="flex items-center justify-between text-sm">
+              <div className="flex items-center gap-2">
+                <Gem className="w-4 h-4 text-cyan-500" />
+                <span className="text-gray-600">云晶收集</span>
+              </div>
+              <span className="font-semibold text-cyan-600">
+                💎 {Math.floor(cloudCrystals)} 颗
+              </span>
+            </div>
+            <div className="flex items-center justify-between text-sm">
+              <span className="text-gray-600">云鲸状态</span>
+              <span className="font-semibold">
+                {cloudWhale.state === 'away' && '远离中'}
+                {cloudWhale.state === 'approaching' && '飞来中'}
+                {cloudWhale.state === 'docked' && '充电中'}
+                {cloudWhale.state === 'leaving' && '离开中'}
+              </span>
+            </div>
+            {cloudWhale.state === 'docked' && (
+              <div className="text-xs text-cyan-600 bg-cyan-100 rounded-lg p-2 text-center">
+                ✨ 云鲸正在充电，全岛风力提升！
+              </div>
+            )}
           </div>
 
           {faultyCount > 0 && (

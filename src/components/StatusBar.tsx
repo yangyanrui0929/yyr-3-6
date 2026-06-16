@@ -1,6 +1,6 @@
 import React from 'react';
 import { useGameStore } from '../store/useGameStore';
-import { Sun, Moon, Zap, Battery, Smile, Meh, Frown } from 'lucide-react';
+import { Sun, Moon, Zap, Battery, Smile, Meh, Frown, Gem, Wind } from 'lucide-react';
 
 export const StatusBar: React.FC = () => {
   const {
@@ -11,6 +11,9 @@ export const StatusBar: React.FC = () => {
     maxStorage,
     satisfaction,
     openSettlement,
+    cloudCrystals,
+    cloudWhale,
+    windBoost,
   } = useGameStore();
 
   const isDay = dayTime < 50;
@@ -136,6 +139,54 @@ export const StatusBar: React.FC = () => {
                 }}
               />
             </div>
+          </div>
+        </div>
+
+        <div className="h-10 w-px bg-gray-200" />
+
+        <div className="flex items-center gap-2">
+          <div className="w-10 h-10 rounded-full bg-cyan-50 flex items-center justify-center">
+            <Gem className="w-5 h-5 text-cyan-500" />
+          </div>
+          <div>
+            <p className="text-xs text-gray-500">云晶</p>
+            <p className="text-sm font-bold text-gray-700">
+              {Math.floor(cloudCrystals)}
+            </p>
+          </div>
+        </div>
+
+        <div className="h-10 w-px bg-gray-200" />
+
+        <div className="flex items-center gap-2">
+          <div
+            className={`w-10 h-10 rounded-full flex items-center justify-center ${
+              windBoost > 0 ? 'bg-teal-100 animate-pulse' : 'bg-gray-100'
+            }`}
+          >
+            <Wind
+              className={`w-5 h-5 ${windBoost > 0 ? 'text-teal-500' : 'text-gray-400'}`}
+            />
+          </div>
+          <div>
+            <p className="text-xs text-gray-500">云鲸状态</p>
+            <p className="text-sm font-bold">
+              {cloudWhale.state === 'away' && (
+                <span className="text-gray-400">远离中</span>
+              )}
+              {cloudWhale.state === 'approaching' && (
+                <span className="text-blue-500">飞来中</span>
+              )}
+              {cloudWhale.state === 'docked' && (
+                <span className="text-green-500">充电中</span>
+              )}
+              {cloudWhale.state === 'leaving' && (
+                <span className="text-gray-500">离开中</span>
+              )}
+            </p>
+            {windBoost > 0 && (
+              <p className="text-xs text-teal-600 font-semibold">+{windBoost} 风力加成</p>
+            )}
           </div>
         </div>
 

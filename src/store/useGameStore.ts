@@ -5,10 +5,23 @@ import {
   GRID_SIZE,
   DAY_LENGTH,
   FAULT_CHANCE,
-  BUILDING_STATS,
   DAY_THRESHOLD,
+  CloudWhaleData,
+  CLOUD_WHALE_VISIT_INTERVAL,
+  CLOUD_WHALE_APPROACH_DURATION,
+  CLOUD_WHALE_LEAVE_DURATION,
+  CLOUD_WHALE_MIN_DOCK_TIME,
+  CLOUD_WHALE_MAX_DOCK_TIME,
+  CLOUD_WHALE_WIND_BOOST,
+  CLOUD_WHALE_CRYSTAL_PER_TICK,
 } from '../utils/constants';
-import { calculatePowerNetwork, countPoweredBuildings } from '../utils/powerCalculator';
+import {
+  calculatePowerNetwork,
+  countPoweredBuildings,
+  calculateNoiseMap,
+  calculatePowerStability,
+  isDockingZoneSuitable,
+} from '../utils/powerCalculator';
 
 const STORAGE_KEY = 'floating-island-grid-game-save';
 
@@ -17,6 +30,8 @@ interface PersistedState {
   dayTime: number;
   storedPower: number;
   satisfaction: number;
+  cloudCrystals: number;
+  cloudWhale: CloudWhaleData;
 }
 
 interface GameState {
@@ -30,6 +45,11 @@ interface GameState {
   totalGeneration: number;
   totalConsumption: number;
   showSettlement: boolean;
+  cloudCrystals: number;
+  cloudWhale: CloudWhaleData;
+  noiseMap: number[][];
+  powerStability: number;
+  windBoost: number;
   setSelectedTool: (tool: ToolType) => void;
   placeOrRemove: (x: number, y: number) => void;
   rotateCell: (x: number, y: number) => void;
@@ -66,6 +86,8 @@ function saveToLocalStorage(state: PersistedState): void {
       dayTime: state.dayTime,
       storedPower: state.storedPower,
       satisfaction: state.satisfaction,
+      cloudCrystals: state.cloudCrystals,
+      cloudWhale: state.cloudWhale,
     });
     localStorage.setItem(STORAGE_KEY, data);
   } catch {
@@ -84,6 +106,14 @@ function loadFromLocalStorage(): PersistedState | null {
         dayTime: data.dayTime ?? 20,
         storedPower: data.storedPower ?? 10,
         satisfaction: data.satisfaction ?? 50,
+        cloudCrystals: data.cloudCrystals ?? 0,
+        cloudWhale: data.cloudWhale ?? {
+          state: 'away',
+          progress: 0,
+          dockedTicks: 0,
+          nextVisitIn: CLOUD_WHALE_VISIT_INTERVAL,
+          satisfaction: 100,
+        },
       };
     }
   } catch {
@@ -92,9 +122,12 @@ function loadFromLocalStorage(): PersistedState | null {
   return null;
 }
 
-function recalcGrid(grid: GridCell[][], dayTime: number, storedPower: number) {
+function recalcGrid(grid: GridCell[][], dayTime: number, storedPower: number, windBoost: number = 0) {
   const { poweredCells, totalGeneration, totalConsumption, batteryCapacity } =
     calculatePowerNetwork(grid, dayTime, storedPower);
+
+  const windmillCount = grid.flat().filter((c) => c.type === 'windmill' && !c.faulty).length;
+  const boostedGeneration = totalGeneration + windBoost * windmillCount;
 
   const newGrid = grid.map((row) => row.map((c) => ({ ...c })));
   for (let yy = 0; yy < GRID_SIZE; yy++) {
@@ -103,7 +136,18 @@ function recalcGrid(grid: GridCell[][], dayTime: number, storedPower: number) {
     }
   }
 
-  return { newGrid, poweredCells, totalGeneration, totalConsumption, batteryCapacity };
+  const noiseMap = calculateNoiseMap(newGrid);
+  const powerStability = calculatePowerStability(newGrid, poweredCells);
+
+  return {
+    newGrid,
+    poweredCells,
+    totalGeneration: boostedGeneration,
+    totalConsumption,
+    batteryCapacity,
+    noiseMap,
+    powerStability,
+  };
 }
 
 function initGame(): Omit<GameState, keyof GameStateActions> {
@@ -112,9 +156,21 @@ function initGame(): Omit<GameState, keyof GameStateActions> {
   const dayTime = saved ? saved.dayTime : 20;
   const storedPower = saved ? saved.storedPower : 10;
   const satisfaction = saved ? saved.satisfaction : 50;
+  const cloudCrystals = saved ? saved.cloudCrystals : 0;
+  const cloudWhale = saved
+    ? saved.cloudWhale
+    : {
+        state: 'away' as const,
+        progress: 0,
+        dockedTicks: 0,
+        nextVisitIn: CLOUD_WHALE_VISIT_INTERVAL,
+        satisfaction: 100,
+      };
 
-  const { newGrid, poweredCells, totalGeneration, totalConsumption, batteryCapacity } =
-    recalcGrid(grid, dayTime, storedPower);
+  const windBoost = cloudWhale.state === 'docked' ? CLOUD_WHALE_WIND_BOOST : 0;
+
+  const { newGrid, poweredCells, totalGeneration, totalConsumption, batteryCapacity, noiseMap, powerStability } =
+    recalcGrid(grid, dayTime, storedPower, windBoost);
 
   return {
     grid: newGrid,
@@ -127,6 +183,11 @@ function initGame(): Omit<GameState, keyof GameStateActions> {
     totalGeneration,
     totalConsumption,
     showSettlement: false,
+    cloudCrystals,
+    cloudWhale,
+    noiseMap,
+    powerStability,
+    windBoost,
   };
 }
 
@@ -141,6 +202,103 @@ type GameStateActions = Pick<
   | 'openSettlement'
   | 'closeSettlement'
 >;
+
+function updateCloudWhale(
+  state: GameState,
+  grid: GridCell[][],
+  poweredCells: Set<string>,
+  noiseMap: number[][]
+): {
+  cloudWhale: CloudWhaleData;
+  windBoost: number;
+  cloudCrystals: number;
+} {
+  const whale = { ...state.cloudWhale };
+  let windBoost = 0;
+  let cloudCrystals = state.cloudCrystals;
+
+  switch (whale.state) {
+    case 'away':
+      whale.nextVisitIn--;
+      if (whale.nextVisitIn <= 0) {
+        whale.state = 'approaching';
+        whale.progress = 0;
+        whale.satisfaction = 100;
+      }
+      break;
+
+    case 'approaching': {
+      whale.progress++;
+      if (whale.progress >= CLOUD_WHALE_APPROACH_DURATION) {
+        const cx = Math.floor(GRID_SIZE / 2);
+        const cy = Math.floor(GRID_SIZE / 2);
+        const { suitable } = isDockingZoneSuitable(
+          grid,
+          poweredCells,
+          noiseMap,
+          cx,
+          cy,
+          2
+        );
+
+        if (suitable) {
+          whale.state = 'docked';
+          whale.dockedTicks = 0;
+          whale.satisfaction = 100;
+        } else {
+          whale.state = 'leaving';
+          whale.progress = 0;
+        }
+      }
+      break;
+    }
+
+    case 'docked': {
+      whale.dockedTicks++;
+      windBoost = CLOUD_WHALE_WIND_BOOST;
+      cloudCrystals += CLOUD_WHALE_CRYSTAL_PER_TICK;
+
+      const cx = Math.floor(GRID_SIZE / 2);
+      const cy = Math.floor(GRID_SIZE / 2);
+      const { suitable, reasons } = isDockingZoneSuitable(
+        grid,
+        poweredCells,
+        noiseMap,
+        cx,
+        cy,
+        2
+      );
+
+      if (!suitable) {
+        whale.satisfaction -= reasons.length * 5;
+      } else {
+        whale.satisfaction = Math.min(100, whale.satisfaction + 0.5);
+      }
+
+      const maxDockTime = CLOUD_WHALE_MIN_DOCK_TIME +
+        Math.floor(Math.random() * (CLOUD_WHALE_MAX_DOCK_TIME - CLOUD_WHALE_MIN_DOCK_TIME));
+
+      if (whale.satisfaction <= 0 || whale.dockedTicks >= maxDockTime) {
+        whale.state = 'leaving';
+        whale.progress = 0;
+      }
+      break;
+    }
+
+    case 'leaving':
+      whale.progress++;
+      if (whale.progress >= CLOUD_WHALE_LEAVE_DURATION) {
+        whale.state = 'away';
+        whale.nextVisitIn = CLOUD_WHALE_VISIT_INTERVAL +
+          Math.floor(Math.random() * CLOUD_WHALE_VISIT_INTERVAL * 0.5);
+        whale.progress = 0;
+        whale.dockedTicks = 0;
+      }
+      break;
+  }
+
+  return { cloudWhale: whale, windBoost, cloudCrystals };
+}
 
 export const useGameStore = create<GameState>((set, get) => ({
   ...initGame(),
@@ -173,7 +331,8 @@ export const useGameStore = create<GameState>((set, get) => ({
       };
     }
 
-    const result = recalcGrid(newGrid, state.dayTime, state.storedPower);
+    const windBoost = state.cloudWhale.state === 'docked' ? CLOUD_WHALE_WIND_BOOST : 0;
+    const result = recalcGrid(newGrid, state.dayTime, state.storedPower, windBoost);
 
     const nextState = {
       grid: result.newGrid,
@@ -181,6 +340,8 @@ export const useGameStore = create<GameState>((set, get) => ({
       totalGeneration: result.totalGeneration,
       totalConsumption: result.totalConsumption,
       maxStorage: result.batteryCapacity,
+      noiseMap: result.noiseMap,
+      powerStability: result.powerStability,
     };
 
     saveToLocalStorage({
@@ -188,6 +349,8 @@ export const useGameStore = create<GameState>((set, get) => ({
       dayTime: state.dayTime,
       storedPower: state.storedPower,
       satisfaction: state.satisfaction,
+      cloudCrystals: state.cloudCrystals,
+      cloudWhale: state.cloudWhale,
     });
 
     set(nextState);
@@ -201,7 +364,8 @@ export const useGameStore = create<GameState>((set, get) => ({
     const newGrid = state.grid.map((row) => row.map((c) => ({ ...c })));
     newGrid[y][x].rotation = (cell.rotation + 1) % 6;
 
-    const result = recalcGrid(newGrid, state.dayTime, state.storedPower);
+    const windBoost = state.cloudWhale.state === 'docked' ? CLOUD_WHALE_WIND_BOOST : 0;
+    const result = recalcGrid(newGrid, state.dayTime, state.storedPower, windBoost);
 
     const nextState = {
       grid: result.newGrid,
@@ -209,6 +373,8 @@ export const useGameStore = create<GameState>((set, get) => ({
       totalGeneration: result.totalGeneration,
       totalConsumption: result.totalConsumption,
       maxStorage: result.batteryCapacity,
+      noiseMap: result.noiseMap,
+      powerStability: result.powerStability,
     };
 
     saveToLocalStorage({
@@ -216,6 +382,8 @@ export const useGameStore = create<GameState>((set, get) => ({
       dayTime: state.dayTime,
       storedPower: state.storedPower,
       satisfaction: state.satisfaction,
+      cloudCrystals: state.cloudCrystals,
+      cloudWhale: state.cloudWhale,
     });
 
     set(nextState);
@@ -229,7 +397,8 @@ export const useGameStore = create<GameState>((set, get) => ({
     const newGrid = state.grid.map((row) => row.map((c) => ({ ...c })));
     newGrid[y][x].faulty = false;
 
-    const result = recalcGrid(newGrid, state.dayTime, state.storedPower);
+    const windBoost = state.cloudWhale.state === 'docked' ? CLOUD_WHALE_WIND_BOOST : 0;
+    const result = recalcGrid(newGrid, state.dayTime, state.storedPower, windBoost);
 
     const nextState = {
       grid: result.newGrid,
@@ -237,6 +406,8 @@ export const useGameStore = create<GameState>((set, get) => ({
       totalGeneration: result.totalGeneration,
       totalConsumption: result.totalConsumption,
       maxStorage: result.batteryCapacity,
+      noiseMap: result.noiseMap,
+      powerStability: result.powerStability,
     };
 
     saveToLocalStorage({
@@ -244,6 +415,8 @@ export const useGameStore = create<GameState>((set, get) => ({
       dayTime: state.dayTime,
       storedPower: state.storedPower,
       satisfaction: state.satisfaction,
+      cloudCrystals: state.cloudCrystals,
+      cloudWhale: state.cloudWhale,
     });
 
     set(nextState);
@@ -264,7 +437,7 @@ export const useGameStore = create<GameState>((set, get) => ({
 
     const newDayTime = (state.dayTime + 0.5) % DAY_LENGTH;
 
-    const { poweredCells, totalGeneration, totalConsumption, batteryCapacity } =
+    const { poweredCells, totalGeneration: baseGeneration, totalConsumption, batteryCapacity } =
       calculatePowerNetwork(newGrid, newDayTime, state.storedPower);
 
     for (let yy = 0; yy < GRID_SIZE; yy++) {
@@ -272,6 +445,19 @@ export const useGameStore = create<GameState>((set, get) => ({
         newGrid[yy][xx].powered = poweredCells.has(`${xx},${yy}`);
       }
     }
+
+    const noiseMap = calculateNoiseMap(newGrid);
+    const powerStability = calculatePowerStability(newGrid, poweredCells);
+
+    const { cloudWhale, windBoost, cloudCrystals } = updateCloudWhale(
+      state,
+      newGrid,
+      poweredCells,
+      noiseMap
+    );
+
+    const windmillCount = newGrid.flat().filter((c) => c.type === 'windmill' && !c.faulty).length;
+    const totalGeneration = baseGeneration + windBoost * windmillCount;
 
     const netPower = totalGeneration - totalConsumption;
     let newStoredPower = state.storedPower;
@@ -293,7 +479,7 @@ export const useGameStore = create<GameState>((set, get) => ({
     );
     const totalBuildings = houses + factories;
     const totalPowered = poweredHouses + poweredFactories;
-    let coverage = totalBuildings > 0 ? totalPowered / totalBuildings : 1;
+    const coverage = totalBuildings > 0 ? totalPowered / totalBuildings : 1;
 
     let newSatisfaction = state.satisfaction;
     if (coverage >= 0.8) {
@@ -304,11 +490,17 @@ export const useGameStore = create<GameState>((set, get) => ({
       newSatisfaction = Math.max(0, state.satisfaction - 0.3);
     }
 
+    if (cloudWhale.state === 'docked') {
+      newSatisfaction = Math.min(100, newSatisfaction + 0.1);
+    }
+
     saveToLocalStorage({
       grid: newGrid,
       dayTime: newDayTime,
       storedPower: newStoredPower,
       satisfaction: newSatisfaction,
+      cloudCrystals,
+      cloudWhale,
     });
 
     set({
@@ -320,13 +512,25 @@ export const useGameStore = create<GameState>((set, get) => ({
       poweredCells,
       totalGeneration,
       totalConsumption,
+      cloudCrystals,
+      cloudWhale,
+      noiseMap,
+      powerStability,
+      windBoost,
     });
   },
 
   resetGame: () => {
     localStorage.removeItem(STORAGE_KEY);
     const fresh = createEmptyGrid();
-    const result = recalcGrid(fresh, 20, 10);
+    const result = recalcGrid(fresh, 20, 10, 0);
+    const initialWhale: CloudWhaleData = {
+      state: 'away',
+      progress: 0,
+      dockedTicks: 0,
+      nextVisitIn: CLOUD_WHALE_VISIT_INTERVAL,
+      satisfaction: 100,
+    };
     set({
       grid: result.newGrid,
       dayTime: 20,
@@ -338,6 +542,11 @@ export const useGameStore = create<GameState>((set, get) => ({
       totalGeneration: result.totalGeneration,
       totalConsumption: result.totalConsumption,
       showSettlement: false,
+      cloudCrystals: 0,
+      cloudWhale: initialWhale,
+      noiseMap: result.noiseMap,
+      powerStability: result.powerStability,
+      windBoost: 0,
     });
   },
 

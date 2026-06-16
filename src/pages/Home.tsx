@@ -2,6 +2,7 @@ import { FloatingIsland } from '@/components/FloatingIsland';
 import { Toolbar } from '@/components/Toolbar';
 import { StatusBar } from '@/components/StatusBar';
 import { SettlementModal } from '@/components/SettlementModal';
+import { CloudWhale } from '@/components/CloudWhale';
 import { useGameLoop } from '@/hooks/useGameLoop';
 import { useGameStore } from '@/store/useGameStore';
 
@@ -20,6 +21,7 @@ export default function Home() {
       }}
     >
       <Clouds isNight={isNight} />
+      <CloudWhale />
 
       <div className="relative z-10 max-w-6xl mx-auto px-4 py-6 flex flex-col gap-6">
         <header className="text-center">
@@ -147,10 +149,27 @@ function GameGuide({ isNight }: { isNight: boolean }) {
           <b>蓄电池</b>存20电，夜间放电
         </li>
         <li>
+          <span className="inline-block w-4 mr-1">💡</span>
+          <b>柔和灯</b>消耗1电，营造舒适氛围
+        </li>
+        <li>
           <span className="inline-block w-4 mr-1">⚡</span>
           <b>电线</b>连接建筑，可旋转
         </li>
       </ul>
+
+      <div className="mt-4 pt-3 border-t border-gray-300/30">
+        <h4 className="text-xs font-bold mb-2 flex items-center gap-1">
+          🐋 云鲸充电
+        </h4>
+        <ul className="text-xs space-y-1">
+          <li>云鲸周期性经过浮岛</li>
+          <li>只停靠在安静、供电稳、有柔和灯的区域</li>
+          <li>停靠后提升全岛风力，留下云晶</li>
+          <li>线路闪烁或噪音过高会提前离开</li>
+        </ul>
+      </div>
+
       <div className="mt-4 pt-3 border-t border-gray-300/30">
         <p className={`text-xs ${isNight ? 'text-slate-400' : 'text-gray-500'}`}>
           💡 保持80%以上建筑供电可获得最高满意度！

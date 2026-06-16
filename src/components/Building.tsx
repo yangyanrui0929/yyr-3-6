@@ -42,6 +42,23 @@ export const Building: React.FC<BuildingProps> = ({ cell }) => {
           />
         </div>
       )}
+      {cell.type === 'lamp' && cell.powered && !cell.faulty && (
+        <>
+          <div
+            className="absolute inset-0 rounded-full animate-pulse"
+            style={{
+              background: 'radial-gradient(circle, rgba(255,236,179,0.6) 0%, transparent 70%)',
+              transform: 'scale(1.5)',
+            }}
+          />
+          <div
+            className="absolute -top-2 left-1/2 -translate-x-1/2 w-8 h-8 rounded-full animate-pulse"
+            style={{
+              background: 'radial-gradient(circle, rgba(255,235,150,0.8) 0%, transparent 70%)',
+            }}
+          />
+        </>
+      )}
     </div>
   );
 };
